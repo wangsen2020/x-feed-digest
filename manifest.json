@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "X Feed Digest",
+  "version": "0.1.0",
+  "description": "定时汇总你关注的博主当日发帖，本地整理后生成可发布的 post 草稿建议。自用工具。",
+  "permissions": [
+    "alarms",
+    "storage",
+    "unlimitedStorage",
+    "notifications",
+    "cookies",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://api.x.com/*",
+    "https://twitter.com/*"
+  ],
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "X Feed Digest",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["src/net-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["src/bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

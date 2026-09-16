@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>X Feed Digest — 汇总面板</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --line: rgba(128,128,128,.28);
+      --muted: rgba(128,128,128,1);
+      --accent: #1d9bf0;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif; }
+
+    .page { max-width: 1240px; margin: 0 auto; padding: 28px 20px 60px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .lead { color: var(--muted); margin: 0 0 22px; font-size: 13px; }
+
+    /* 左右两栏：右侧是分析历史。窄屏自动堆叠成一栏。 */
+    .cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 18px; align-items: start; }
+    @media (max-width: 980px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+    .banner { display: none; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 10px;
+              background: rgba(217,48,37,.12); border: 1px solid rgba(217,48,37,.3); margin-bottom: 18px; }
+    .banner.show { display: flex; }
+    /* 能自愈的状态用中性蓝，别做成红色报错——它不需要你处理 */
+    .banner.info { background: rgba(29,155,240,.12); border-color: rgba(29,155,240,.3); }
+    .banner .t { flex: 1; }
+    .banner b { display: block; }
+    .banner small { color: var(--muted); }
+
+    section { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; }
+    section > h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
+    aside section { position: sticky; top: 20px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    input, select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
+                    background: transparent; color: inherit; font: inherit; font-size: 13px; width: 100%; }
+    input[type=checkbox] { width: auto; }
+    label.cb { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+
+    button { padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent;
+             color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+    button:hover:not(:disabled) { background: rgba(128,128,128,.12); }
+    button:disabled { opacity: .5; cursor: default; }
+    button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+    .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+    .hint { color: var(--muted); font-size: 12px; }
+
+    /* 折叠区：默认收起，摘要行显示统计，点开才展开操作 */
+    details.fold > summary { cursor: pointer; font-size: 14px; font-weight: 600; list-style: none;
+                             display: flex; align-items: center; gap: 8px; }
+    details.fold > summary::-webkit-details-marker { display: none; }
+    details.fold > summary::before { content: "▸"; color: var(--muted); font-weight: 400; }
+    details.fold[open] > summary::before { content: "▾"; }
+    details.fold > summary .sub { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: auto; }
+    .foldBody { margin-top: 14px; }
+
+    .authors { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+               max-height: 320px; overflow-y: auto; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px;
+            border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+    .chip.off { opacity: .45; }
+    .chip .tier { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(128,128,128,.18); }
+    .chip .tier.hot    { background: rgba(217,48,37,.2); }
+    .chip .tier.warm   { background: rgba(29,155,240,.2); }
+    .chip .tier.cold   { background: rgba(128,128,128,.18); }
+    .chip .tier.frozen { background: rgba(128,128,128,.1); }
+    .chip button { border: 0; padding: 0 4px; font-size: 15px; line-height: 1; color: var(--muted); }
+    .chip button:hover { background: transparent; color: #d93025; }
+
+    .post { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+    .post .head { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .post .head b { color: inherit; font-size: 13px; }
+    .post .body { white-space: pre-wrap; word-break: break-word; }
+    .post .foot { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+    .post a { color: var(--accent); text-decoration: none; }
+
+    table.diag { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.diag td { padding: 5px 0; border-bottom: 1px solid var(--line); }
+    table.diag td:first-child { color: var(--muted); width: 180px; }
+    .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+    .digest { white-space: pre-wrap; word-break: break-word; line-height: 1.75; }
+    .digest a { color: var(--accent); text-decoration: none; }
+    .digest a:hover { text-decoration: underline; }
+    /* 每条建议的首行拉开间距，编号做成小标签，扫读时容易定位 */
+    .digest .dItem { margin-top: 14px; font-weight: 600; }
+    .digest .dItem:first-child { margin-top: 0; }
+    .digest .dLink { font-size: 12px; font-weight: 400; margin-left: 2px; white-space: nowrap; }
+    .digest .dNum { display: inline-block; min-width: 30px; padding: 0 6px; margin-right: 2px;
+                    border-radius: 6px; background: rgba(29,155,240,.14); color: var(--accent);
+                    font-size: 12px; text-align: center; }
+    .post .head b a { color: inherit; text-decoration: none; }
+    .post .head b a:hover { text-decoration: underline; }
+    .post .head a { color: inherit; text-decoration: none; }
+    .post .head a:hover { text-decoration: underline; }
+    .post .body a { color: var(--accent); text-decoration: none; }
+    .post .body a:hover { text-decoration: underline; }
+    .digest.err { color: #d93025; font-size: 13px; }
+
+    /* 右栏：分析历史列表 */
+    .histList { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+    .histItem { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px;
+                border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+    .histItem:hover { background: rgba(128,128,128,.09); }
+    .histItem.cur { border-color: var(--accent); }
+    .histItem .m { flex: 1; min-width: 0; }
+    .histItem .when { font-size: 12px; }
+    .histItem .peek { color: var(--muted); font-size: 12px; margin-top: 2px;
+                      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .histItem .del { border: 0; padding: 0 4px; color: var(--muted); font-size: 15px; line-height: 1.4; }
+    .histItem .del:hover { background: transparent; color: #d93025; }
+
+    /* 遮罩：任务进行中 & 详情弹窗共用一套底 */
+    .veil { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+            background: rgba(20,20,20,.55); backdrop-filter: blur(2px); z-index: 99; padding: 24px; }
+    .veil.show { display: flex; }
+    .veil .card { background: Canvas; color: CanvasText; border-radius: 12px; padding: 22px 26px;
+                  box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+
+    #overlay .card { min-width: 260px; text-align: center; }
+    #overlay .spin { width: 26px; height: 26px; margin: 0 auto 12px; border-radius: 50%;
+                     border: 3px solid rgba(128,128,128,.3); border-top-color: var(--accent);
+                     animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #overlay .t { font-weight: 600; margin-bottom: 4px; }
+    #overlay .p { color: var(--muted); font-size: 12px; min-height: 18px; }
+    #overlay .n { color: var(--muted); font-size: 11px; margin-top: 10px; }
+
+    #modal .card { width: min(760px, 100%); max-height: 84vh; display: flex; flex-direction: column; }
+    #modal .mHead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    #modal .mHead b { flex: 1; font-size: 14px; }
+    #modal .mBody { overflow-y: auto; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <h1>X Feed Digest</h1>
+  <p class="lead">定时汇总关注博主的发帖，交给 x.com 自带的 Grok 挑出值得借鉴的内容。数据全部保存在本地。</p>
+
+  <div id="banner" class="banner">
+    <div class="t"><b id="bannerTitle"></b><small id="bannerBody"></small></div>
+    <button id="bannerFix" class="primary">打开 x.com 重新捕获</button>
+  </div>
+
+  <div class="cols">
+    <main>
+      <section>
+        <h2>抓取</h2>
+        <div class="grid">
+          <label class="f">时间窗（小时）<input type="number" id="windowHours" min="1" max="72"></label>
+          <label class="f">最多保留几条<input type="number" id="maxToLLM" min="5" max="200"></label>
+          <label class="f">最低点赞数<input type="number" id="minLikes" min="0"></label>
+          <label class="f">送进 Grok 的条数<input type="number" id="maxToGrok" min="5" max="120"></label>
+        </div>
+        <div class="actions">
+          <label class="cb"><input type="checkbox" id="dropRetweets"> 过滤转推</label>
+          <label class="cb"><input type="checkbox" id="dropReplies"> 过滤回复</label>
+          <label class="cb"><input type="checkbox" id="autoGrok"> 定时汇总后自动分析</label>
+        </div>
+        <div class="actions">
+          <button id="save" class="primary">保存设置</button>
+          <button id="run">立即汇总一次</button>
+          <button id="resume" style="display:none">继续抓取</button>
+          <button id="reset" style="display:none">重开批次</button>
+          <span id="msg" class="hint"></span>
+        </div>
+        <p id="batchInfo" class="hint" style="margin:10px 0 0"></p>
+      </section>
+
+      <section>
+        <details class="fold" id="authorFold">
+          <summary>博主名单 <span class="sub" id="authorCount"></span></summary>
+          <div class="foldBody">
+            <div id="authors" class="authors"></div>
+            <div class="actions">
+              <input id="newAuthor" placeholder="输入 handle，不带 @，多个用空格或逗号分隔" style="flex:1;min-width:240px">
+              <button id="addAuthor">添加</button>
+              <button id="importFollowing">从关注列表导入</button>
+            </div>
+            <p class="hint" style="margin:10px 0 0">
+              档位由实际发帖密度自动判定：<b>高频</b> 每天抓 60 条 · <b>常规</b> 每天抓 30 条 ·
+              <b>低频</b> 每 3 天一次 · <b>沉寂</b> 每 7 天一次。跳过的天数会自动拉长回看窗口，不会漏帖。
+            </p>
+          </div>
+        </details>
+      </section>
+
+      <section id="digestSec" style="display:none">
+        <h2>当前结论 <span id="digestMeta" class="hint"></span></h2>
+        <div id="digest" class="digest"></div>
+        <div class="actions">
+          <button id="analyze" class="primary">用 Grok 分析</button>
+          <button id="copyDigest">复制全文</button>
+          <span class="hint">分析已保留的帖子，不重新抓取，可反复重跑</span>
+        </div>
+      </section>
+
+      <section>
+        <details class="fold" id="postsFold">
+          <summary>当前批次的帖子 <span class="sub" id="runMeta"></span></summary>
+          <div class="foldBody"><div id="posts"></div></div>
+        </details>
+      </section>
+
+      <section>
+        <details class="fold" id="diagFold">
+          <summary>诊断 <span class="sub" id="diagSub"></span></summary>
+          <div class="foldBody"><table class="diag"><tbody id="diag"></tbody></table></div>
+        </details>
+      </section>
+    </main>
+
+    <aside>
+      <section>
+        <h2>分析历史 <span class="hint" id="histCount"></span></h2>
+        <div id="histList" class="histList"></div>
+        <p class="hint" style="margin:12px 0 0">批次会滚掉，结论一直留着（最多 20 条）。点条目看详情。</p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="overlay" class="veil">
+  <div class="card">
+    <div class="spin"></div>
+    <div class="t" id="ovTitle">处理中</div>
+    <div class="p" id="ovProgress"></div>
+    <button id="ovCancel" style="margin-top:14px">取消</button>
+    <div class="n">取消会在当前这个博主抓完后停下，已抓到的内容保留</div>
+  </div>
+</div>
+
+<div id="modal" class="veil">
+  <div class="card">
+    <div class="mHead">
+      <b id="mTitle"></b>
+      <button id="mCopy">复制</button>
+      <button id="mDelete">删除</button>
+      <button id="mClose">关闭</button>
+    </div>
+    <div class="mBody digest" id="mBody"></div>
+  </div>
+</div>
+
+<script src="options.js" type="module"></script>
+</body>
+</html>

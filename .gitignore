@@ -1,0 +1,18 @@
+# 依赖 / 构建产物
+node_modules/
+dist/
+*.zip
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 本机私有：抓到的模板、cookie 快照、调试导出，一律不进仓库
+*.local
+scratch/
+debug/

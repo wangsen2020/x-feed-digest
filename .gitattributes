@@ -1,0 +1,4 @@
+# 仓库内统一 LF。扩展的 JS 会被当字符串处理，CRLF 会把匹配搞坏。
+* text=auto eol=lf
+
+*.png binary

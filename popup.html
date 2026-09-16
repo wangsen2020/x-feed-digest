@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>X Feed Digest</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { width: 280px; margin: 0; padding: 14px; font: 13px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+    h1 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+    .status { display: flex; gap: 8px; align-items: flex-start; padding: 9px 10px; border-radius: 8px; margin-bottom: 12px; }
+    .status.ok    { background: rgba(0,150,80,.12); }
+    .status.warn  { background: rgba(217,48,37,.12); }
+    .status.info  { background: rgba(29,155,240,.12); }
+    .status .dot  { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; }
+    .ok .dot   { background: #0a0; }
+    .warn .dot { background: #d93025; }
+    .info .dot { background: #1d9bf0; }
+    .status .txt { flex: 1; }
+    .status .sub { opacity: .7; font-size: 12px; }
+    button { width: 100%; padding: 8px; margin-bottom: 7px; border: 1px solid rgba(128,128,128,.35);
+             border-radius: 7px; background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
+    button:hover { background: rgba(128,128,128,.12); }
+    button.primary { border-color: transparent; background: #1d9bf0; color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+    .row label { flex: 1; }
+    input[type=time] { border: 1px solid rgba(128,128,128,.35); border-radius: 6px; padding: 3px 6px;
+                       background: transparent; color: inherit; }
+    .msg { font-size: 12px; opacity: .75; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <h1>X Feed Digest</h1>
+
+  <div id="status" class="status ok">
+    <span class="dot"></span>
+    <span class="txt"><span id="statusText">读取中…</span><br><span id="statusSub" class="sub"></span></span>
+  </div>
+
+  <button id="run" class="primary">立即汇总一次</button>
+  <button id="openOptions">打开汇总面板</button>
+  <button id="openX">重新捕获接口参数</button>
+
+  <div class="row">
+    <label for="enabled">每日自动运行</label>
+    <input type="checkbox" id="enabled">
+    <input type="time" id="time">
+  </div>
+
+  <div id="msg" class="msg"></div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
