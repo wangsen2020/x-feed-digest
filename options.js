@@ -48,6 +48,7 @@ function syncBusy() {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.cmd === 'jobState') setBusy(msg.job);
+  if (msg && msg.cmd === 'runLogged') paintLog();
 });
 
 $('ovCancel').addEventListener('click', () => {
@@ -224,8 +225,8 @@ $('importFollowing').addEventListener('click', () => {
 
 // ─────────────── 设置 ───────────────
 
-const FIELDS = ['windowHours', 'maxToLLM', 'minLikes', 'maxToGrok'];
-const FLAGS = ['dropRetweets', 'dropReplies', 'autoGrok'];
+const FIELDS = ['windowHours', 'maxToLLM', 'minLikes', 'maxToGrok', 'hour', 'minute', 'everyMinutes', 'plainMinChars', 'minEngageRate', 'maxFollowers'];
+const FLAGS = ['dropRetweets', 'dropReplies', 'autoGrok', 'enabled', 'dropPlainShort'];
 
 async function paintSettings() {
   const s = await getSettings();
@@ -238,8 +239,53 @@ $('save').addEventListener('click', async () => {
   for (const k of FIELDS) s[k] = Number($(k).value) || 0;
   for (const k of FLAGS) s[k] = $(k).checked;
   await set(K.SETTINGS, s);
+  // 时刻改了闹钟不会自己跟着变，必须让后台重排一次——否则改完看着生效了，
+  // 实际还按旧时间响。
+  chrome.runtime.sendMessage({ cmd: 'reschedule' }, () => { void chrome.runtime.lastError; paintLog(); });
   $('msg').textContent = '已保存';
   setTimeout(() => ($('msg').textContent = ''), 1800);
+});
+
+// ─────────────── 执行日志 ───────────────
+
+const LOG_KIND = {
+  sched: '排期', fire: '触发', catchup: '补跑', manual: '手动',
+  skip: '跳过', done: '完成', fail: '失败',
+};
+
+function paintLog() {
+  chrome.runtime.sendMessage({ cmd: 'runLog' }, (r) => {
+    if (chrome.runtime.lastError || !r) return;
+    const box = $('runLog');
+    box.textContent = '';
+    const list = (r.log || []).slice().reverse();  // 新的在上面
+    $('logCount').textContent = list.length ? list.length + ' 条' : '还没有记录';
+    $('nextRun').textContent = r.next
+      ? '下次 ' + when(r.next) + (r.last ? ' · 上次跑于 ' + when(r.last) : ' · 还没跑过')
+      : '未排期（定时没启用？）';
+
+    if (!list.length) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = '还没有记录。定时一次都没触发过的话，这里就是空的——这本身就是个信号。';
+      box.appendChild(e);
+      return;
+    }
+    for (const it of list) {
+      const row = document.createElement('div');
+      row.className = 'r ' + it.kind;
+      const t = document.createElement('span'); t.className = 't'; t.textContent = when(it.at);
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = LOG_KIND[it.kind] || it.kind;
+      const m = document.createElement('span'); m.className = 'm'; m.textContent = it.text;
+      row.append(t, k, m);
+      box.appendChild(row);
+    }
+  });
+}
+
+$('refreshLog').addEventListener('click', paintLog);
+$('clearLog').addEventListener('click', () => {
+  chrome.runtime.sendMessage({ cmd: 'clearRunLog' }, () => { void chrome.runtime.lastError; paintLog(); });
 });
 
 $('run').addEventListener('click', () => {
@@ -336,9 +382,15 @@ async function paintDigest() {
   if (shown) {
     box.className = 'digest';
     renderDigest(box, shown.text, shown.index, await handleMap());
+    // 有旧结论时也得把「本批次分析失败了」说出来。
+    // 否则界面只是安静地显示上一批的结论，你根本不知道今天这次其实失败了。
+    const stale = !cur && batch && batch.digestError;
     $('digestMeta').textContent = '基于 ' + shown.postCount + ' 条帖子 · ' + when(shown.at)
       + (cur ? '' : '（上一批次的结论）')
+      + (stale ? ' · 本批次分析失败：' + batch.digestError
+                 + (batch.digestErrorAt ? '（' + when(batch.digestErrorAt) + '）' : '') : '')
       + (shown.index ? '' : ' · 旧记录，原帖链接靠 @作者 反查，重新分析可获得精确链接');
+    $('digestMeta').classList.toggle('err', !!stale);
     $('copyDigest').style.display = '';
     $('analyze').textContent = cur ? '重新分析' : '分析当前批次';
   } else if (batch && batch.digestError) {
@@ -720,7 +772,7 @@ function initFolds() {
 
 function paintAll() {
   paintBanner(); paintAuthors(); paintSettings();
-  paintBatch(); paintDigest(); paintHistory(); paintDiag(); paintPosts();
+  paintBatch(); paintDigest(); paintHistory(); paintDiag(); paintPosts(); paintLog();
 }
 initFolds();
 paintAll();

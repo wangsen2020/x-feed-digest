@@ -255,7 +255,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.cmd === 'cancelJob') { sendResponse(requestCancel()); return true; }
 
   if (msg.cmd === 'runNow') {
-    withJob('digest', () => runDigest({ manual: true }))
+    // 手动跑也算「这一轮跑过了」，否则下次启动会以为漏了又补一遍
+    withJob('digest', async () => {
+      await set(K.LASTRUN, Date.now());
+      logRun('manual', '手动汇总');
+      const r = await runDigest({ manual: true });
+      logRun(...digestLine(r));
+      return r;
+    })
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;
@@ -293,7 +300,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.cmd === 'reschedule') {
-    schedule().then(() => sendResponse({ ok: true }));
+    // 保存设置触发的排期不补跑，否则改个无关选项就顺手跑一轮
+    schedule().then(async () => {
+      const al = await chrome.alarms.get(ALARM_DAILY);
+      sendResponse({ ok: true, next: al ? al.scheduledTime : 0 });
+    });
+    return true;
+  }
+
+  if (msg.cmd === 'runLog') {
+    Promise.all([get(K.RUNLOG, []), chrome.alarms.get(ALARM_DAILY), get(K.LASTRUN, 0)])
+      .then(([log, al, last]) => sendResponse({ log, next: al ? al.scheduledTime : 0, last }));
+    return true;
+  }
+
+  if (msg.cmd === 'clearRunLog') {
+    set(K.RUNLOG, []).then(() => sendResponse({ ok: true }));
     return true;
   }
 });
@@ -569,13 +591,14 @@ async function analyzeLatest() {
     // 不再固定 sleep 等页面就绪——drive() 自己会轮询等输入框挂载
     report('Grok 分析中（' + posts.length + ' 条帖子，约需 1 分钟）…');
     const lim = s.maxToGrok || 40;
+    const sent = Math.min(posts.length, lim);   // 候选池是 maxToLLM 条，真送进去的只有 lim 条
     const { text, ms, via } = await grok.ask(tabId, grok.buildPrompt(posts, lim));
 
     const digests = await get(K.DIGESTS, []);
     digests.unshift({
       at: Date.now(),
       batchId: batch.id,
-      postCount: posts.length,
+      postCount: sent,
       via,
       text,
       // 存下序号→原帖的映射，渲染结论时把编号变成可点的链接
@@ -588,7 +611,7 @@ async function analyzeLatest() {
     batch.digestError = '';
     await set(K.BATCH, batch);
 
-    return { ok: true, chars: text.length, posts: posts.length, ms, via };
+    return { ok: true, chars: text.length, posts: sent, ms, via };
   } catch (e) {
     if (e.kind === 'cancelled') return { ok: false, cancelled: true };
     if (batch) {
@@ -604,37 +627,181 @@ async function analyzeLatest() {
 }
 
 
-/** 过滤 + 排序 */
+const PER_AUTHOR_CAP = 3;
+
+/**
+ * 过滤 + 排序，选出送进模型的候选池。
+ *
+ * 不能按互动绝对值排。那等于先把大号的帖子整块排到前面，Grok 拿到候选池时
+ * 小号的爆款早就被挤掉了——提示词里再怎么强调「看倍率」也无从看起。
+ * 所以这里先做规模归一：互动除以 sqrt(粉丝数)。开方是为了压平基数优势，
+ * 又不至于反过来让 300 粉拿 3 个赞的帖子登顶。
+ *
+ * 分母按整个批次统一选一次，不逐条挑：粉丝数和阅读量差着数量级，
+ * 混着用等于在比两把不同刻度的尺子。取不到分母的那几条给中位数，
+ * 既不白占便宜也不平白吃亏。
+ */
 function rank(list, s) {
-  const score = (t) => t.metrics.like + t.metrics.rt * 2 + t.metrics.quote * 2 + t.metrics.reply;
-  return list
+  const eng = (t) => t.metrics.like + t.metrics.rt * 2 + t.metrics.quote * 2 + t.metrics.reply;
+
+  /*
+   * 「说说」：没图、没视频、没引用的纯文字短帖。
+   *
+   * 这类帖子的赞来自「谁说的」而不是「说了什么」——一个 5w 粉的号发两句话
+   * 拿到的阅读量，新号原样复刻只会是零。送进 Grok 纯属浪费名额，还会挤掉
+   * 真正能抄的结构化帖子。
+   *
+   * 但**只卡短的**。清单、对比、步骤、观点框架——最值得二创的那几类恰恰常常是
+   * 纯文字长帖，按「纯文字」一刀切会把最有价值的一类一起杀掉。
+   * 字数不算链接：两句话配一个长链接不该被算成长帖。
+   */
+  const plainLen = (t) => (t.text || '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\s+/g, '')
+    .length;
+  const isChatter = (t) =>
+    !(t.media && t.media.length) && !t.isQuote && plainLen(t) < (s.plainMinChars || 0);
+
+  /*
+   * 互动率。**故意不带权重**，和 grok.js 印进 prompt 的那个数是同一个算法——
+   * 界面上卡掉一条的理由，必须和 Grok 看到的数字对得上，否则查起来全是幻觉。
+   * （排序用的 eng() 是另一回事，那里转发算两倍是为了排序，不是为了解释。）
+   */
+  const raw = (t) => t.metrics.like + t.metrics.rt + t.metrics.quote + t.metrics.reply;
+  // 粉丝数取不到就返回 null：没有分母，这两条过滤一律不套用，别瞎杀
+  const rateOf = (t) => (t.author.followers > 0 ? raw(t) / t.author.followers * 100 : null);
+
+  const kept = list
     .filter((t) => !(s.dropRetweets && t.isRetweet))
     .filter((t) => !(s.dropReplies && t.isReply))
     .filter((t) => t.metrics.like >= (s.minLikes || 0))
-    .filter((t) => (t.text || '').trim().length > 0)
-    .sort((a, b) => score(b) - score(a))
-    .slice(0, s.maxToLLM);
+    .filter((t) => !(s.dropPlainShort && isChatter(t)))
+    // 名人效应：绝对数高但占粉丝比例低
+    .filter((t) => { const r = rateOf(t); return r === null || !(s.minEngageRate > 0 && r < s.minEngageRate); })
+    // 兜底：大 V 偶尔真有一条爆的，率也够，但那依然是名气在托着
+    .filter((t) => !(s.maxFollowers > 0 && t.author.followers > s.maxFollowers))
+    .filter((t) => (t.text || '').trim().length > 0);
+
+  const byFollowers = kept.filter((t) => t.author.followers > 0).length > kept.length / 2;
+  const basisOf = (t) => (byFollowers ? t.author.followers : t.metrics.views) || 0;
+
+  const known = kept.map(basisOf).filter((v) => v > 0).sort((a, b) => a - b);
+  const median = known.length ? known[Math.floor(known.length / 2)] : 0;
+  const score = (t) => {
+    const b = basisOf(t) || median;
+    return b > 0 ? eng(t) / Math.sqrt(b) : eng(t);
+  };
+
+  // 同一个博主最多进 PER_AUTHOR_CAP 条，别让一个高产账号把池子占满
+  const seen = new Map();
+  const out = [];
+  for (const t of kept.sort((a, b) => score(b) - score(a))) {
+    const h = (t.author.handle || '').toLowerCase();
+    const n = (seen.get(h) || 0) + 1;
+    if (n > PER_AUTHOR_CAP) continue;
+    seen.set(h, n);
+    out.push(t);
+    if (out.length >= s.maxToLLM) break;
+  }
+  return out;
 }
 
 // ────────────────────────────── 定时 ──────────────────────────────
 
-async function schedule() {
+/*
+ * 执行日志。定时任务最难受的地方是它不出声——没跑就是什么都没有，
+ * 你分不清是「没到点」「到点了没醒」还是「跑了但失败了」。所以每一个环节
+ * 都留一行：排期、闹钟响、开跑、结果、被跳过。环形保留最近 200 条。
+ */
+const RUNLOG_CAP = 200;
+
+async function logRun(kind, text) {
+  const list = await get(K.RUNLOG, []);
+  list.push({ at: Date.now(), kind, text: String(text || '') });
+  await set(K.RUNLOG, list.slice(-RUNLOG_CAP));
+  try { chrome.runtime.sendMessage({ cmd: 'runLogged' }, () => void chrome.runtime.lastError); } catch (e) {}
+}
+
+/** 上一个本该执行的时刻（今天的 hh:mm 如果已过，否则昨天的） */
+function prevSlot(s) {
+  const d = new Date();
+  d.setHours(s.hour, s.minute, 0, 0);
+  if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
+  return d.getTime();
+}
+
+/*
+ * opts.catchUp：浏览器启动 / 扩展装好时传 true。
+ *
+ * 这里原来有个会让定时**永远不执行**的坑：schedule() 一上来就 alarms.clear()，
+ * 然后无条件排到「下一个 hh:mm」。而 Chrome 关着的时候闹钟不会响，只会在下次启动后
+ * 补响——可 onStartup 又先调了 schedule()，那个欠着的闹钟当场被清掉，接着排到明天。
+ * 于是只要你不是恰好在 9:00 开着浏览器，这件事就一天拖一天，永远轮不到。
+ * 现在改成：启动时先看上一个时刻有没有跑过，漏了就当场补跑。
+ */
+async function schedule(opts) {
   await chrome.alarms.clear(ALARM_DAILY);
   const s = await getSettings();
-  if (!s.enabled) return;
+  if (!s.enabled) { await logRun('sched', '定时已关闭'); return; }
+
+  // 测试档：每 N 分钟跑一次，不看时刻。用来确认这条链路是通的。
+  const every = Number(s.everyMinutes) || 0;
+  if (every > 0) {
+    const m = Math.max(1, every);
+    chrome.alarms.create(ALARM_DAILY, { delayInMinutes: m, periodInMinutes: m });
+    await logRun('sched', '测试模式：每 ' + m + ' 分钟跑一次，下次 ' + new Date(Date.now() + m * 60000).toLocaleTimeString());
+    return;
+  }
 
   const next = new Date();
   next.setHours(s.hour, s.minute, 0, 0);
   if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
-
   chrome.alarms.create(ALARM_DAILY, { when: next.getTime(), periodInMinutes: 24 * 60 });
+  await logRun('sched', '下次 ' + next.toLocaleString());
+
+  if (opts && opts.catchUp) {
+    const slot = prevSlot(s);
+    const last = await get(K.LASTRUN, 0);
+    if (last < slot) {
+      await logRun('catchup', '上一次 ' + new Date(slot).toLocaleString() + ' 的汇总没跑成，现在补上');
+      fire('补跑');
+    }
+  }
+}
+
+/*
+ * 一轮汇总的结果写成一行日志。「一条都没有」不是失败——可能只是这个时间窗里
+ * 大家都没发帖，写成「失败」会让人白查一圈。
+ */
+function digestLine(r) {
+  if (!r) return ['fail', '没有返回结果'];
+  if (r.cancelled) return ['skip', '已取消，保留 ' + (r.count || 0) + ' 条'];
+  if (r.error) return ['fail', r.error];
+  if (!r.count) return ['done', '跑完了，但这个时间窗里没有符合条件的帖子'];
+  return ['done', '完成，' + r.count + ' 条（抓了 ' + (r.fetched || 0) + ' 个博主'
+    + (r.skipped ? '，按档位跳过 ' + r.skipped + ' 个' : '') + '）'];
+}
+
+/** 闹钟/补跑的统一入口：谁触发的、跑没跑成，都记一行 */
+function fire(why) {
+  logRun('fire', why + ' 触发');
+  if (job) { logRun('skip', '有「' + (job.label || job.name) + '」在跑，这次跳过'); return; }
+  withJob('digest', async () => {
+    await set(K.LASTRUN, Date.now());
+    const r = await runDigest();
+    await logRun(...digestLine(r));
+    if (r && r.autoDigest && !r.autoDigest.ok && !r.autoDigest.cancelled) {
+      await logRun('fail', 'Grok 分析失败：' + (r.autoDigest.error || '未知'));
+    }
+    return r;
+  }).catch((e) => logRun('fail', String((e && e.message) || e)));
 }
 
 chrome.alarms.onAlarm.addListener((al) => {
   // 定时任务同样受锁约束：你手动点着的时候它不该插队
-  if (al.name === ALARM_DAILY) withJob('digest', () => runDigest()).catch(() => {});
+  if (al.name === ALARM_DAILY) fire('闹钟');
 });
 
 // 装好 / 浏览器启动时就把模板准备好，别等你打开面板才发现没装好
-chrome.runtime.onInstalled.addListener(() => { schedule(); ensureReady().catch(() => {}); });
-chrome.runtime.onStartup.addListener(() => { schedule(); ensureReady().catch(() => {}); });
+chrome.runtime.onInstalled.addListener(() => { schedule({ catchUp: true }); ensureReady().catch(() => {}); });
+chrome.runtime.onStartup.addListener(() => { schedule({ catchUp: true }); ensureReady().catch(() => {}); });

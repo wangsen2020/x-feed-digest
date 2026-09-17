@@ -48,6 +48,7 @@
     button.primary { background: var(--accent); border-color: transparent; color: #fff; }
     .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
     .hint { color: var(--muted); font-size: 12px; }
+    .hint.err { color: #d93025; }
 
     /* 折叠区：默认收起，摘要行显示统计，点开才展开操作 */
     details.fold > summary { cursor: pointer; font-size: 14px; font-weight: 600; list-style: none;
@@ -60,6 +61,15 @@
 
     .authors { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
                max-height: 320px; overflow-y: auto; }
+    .runlog { max-height: 300px; overflow-y: auto; font: 12px/1.7 ui-monospace, Menlo, Consolas, monospace;
+              border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
+    .runlog .r { display: flex; gap: 8px; white-space: nowrap; }
+    .runlog .r .t { opacity: .55; }
+    .runlog .r .k { flex: 0 0 auto; min-width: 46px; }
+    .runlog .r .m { white-space: normal; }
+    .runlog .fail .k, .runlog .fail .m { color: #d93025; }
+    .runlog .done .k { color: #1a7f37; }
+    .runlog .empty { opacity: .55; font-family: inherit; }
     .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px;
             border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
     .chip.off { opacity: .45; }
@@ -162,6 +172,16 @@
           <label class="cb"><input type="checkbox" id="autoGrok"> 定时汇总后自动分析</label>
         </div>
         <div class="actions">
+          <label class="cb"><input type="checkbox" id="dropPlainShort"> 丢掉纯文字短帖</label>
+          <label class="f" style="max-width:200px">纯文字帖至少几个字<input type="number" id="plainMinChars" min="0" max="99999"></label>
+          <span class="hint">没图、没视频、没引用又很短的「说说」，靠的是作者名气，新号复刻必然零互动，不值得占 Grok 的名额。<b>只卡短的</b>——清单、对比、步骤这类最值得二创的帖子本身常常就是纯文字长帖。想彻底不要纯文字，把字数填成 99999。</span>
+        </div>
+        <div class="actions">
+          <label class="f" style="max-width:190px">互动率下限（%）<input type="number" id="minEngageRate" min="0" max="100" step="0.1"></label>
+          <label class="f" style="max-width:190px">粉丝数上限<input type="number" id="maxFollowers" min="0" step="10000"></label>
+          <span class="hint">过滤名人大 V，靠的是<b>粉丝数上限</b>——实测这是唯一靠谱的手段。<b>互动率下限默认关（0）</b>：真实数据里互动/粉丝普遍只有 0.0x%~0.5%，填 1% 会把一整轮全杀光；而小号 1 个赞就能算出 0.98%，比率在这件事上区分不了名人和内容。各填 0 表示不卡；粉丝数取不到的帖子两条都不套用。</span>
+        </div>
+        <div class="actions">
           <button id="save" class="primary">保存设置</button>
           <button id="run">立即汇总一次</button>
           <button id="resume" style="display:none">继续抓取</button>
@@ -169,6 +189,29 @@
           <span id="msg" class="hint"></span>
         </div>
         <p id="batchInfo" class="hint" style="margin:10px 0 0"></p>
+      </section>
+
+      <section>
+        <h2>定时 <span id="nextRun" class="hint"></span></h2>
+        <div class="grid">
+          <label class="f">每天几点<input type="number" id="hour" min="0" max="23"></label>
+          <label class="f">几分<input type="number" id="minute" min="0" max="59"></label>
+          <label class="f">测试：每几分钟跑一次<input type="number" id="everyMinutes" min="0" max="1440"></label>
+        </div>
+        <div class="actions">
+          <label class="cb"><input type="checkbox" id="enabled"> 启用定时</label>
+          <span class="hint">「测试」填 0 表示按上面的时刻每天跑；填 1 就是每分钟跑一次，用来确认这条链路是通的，验完记得改回 0。</span>
+        </div>
+        <details class="fold" id="logFold">
+          <summary>执行日志 <span class="sub" id="logCount"></span></summary>
+          <div class="foldBody">
+            <div id="runLog" class="runlog"></div>
+            <div class="actions">
+              <button id="refreshLog">刷新</button>
+              <button id="clearLog">清空</button>
+            </div>
+          </div>
+        </details>
       </section>
 
       <section>

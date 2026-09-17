@@ -21,10 +21,16 @@ function readUser(t) {
   // 新版把 screen_name / name 提到了 core 下，旧版在 legacy 下，两边都试
   const c = u.core || {};
   const l = u.legacy || {};
+  /*
+   * 粉丝数是判断「这条流量是内容挣的还是账号基数带的」唯一的分母，必须取到。
+   * 新版把一部分字段挪到了 core 下，followers_count 目前还在 legacy；
+   * 取不到就留 0，下游按「未知」处理，不要瞎猜。
+   */
   return {
     handle: c.screen_name || l.screen_name || '',
     name: c.name || l.name || '',
     id: u.rest_id || '',
+    followers: num(l.followers_count || (u.relationship_counts && u.relationship_counts.followers)),
   };
 }
 
