@@ -1,6 +1,14 @@
+<img src="docs/hero.svg" alt="X Feed Digest — 本地关注流汇总与创作洞察" width="100%">
+
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-0b1116?style=flat-square&logo=googlechrome&logoColor=white)](manifest.json) [![License: MIT](https://img.shields.io/badge/License-MIT-28b7e8?style=flat-square)](LICENSE) [![Browser: Chrome & Edge](https://img.shields.io/badge/Browser-Chrome%20%26%20Edge-15202b?style=flat-square&logo=googlechrome&logoColor=white)](#安装)
+
 # X Feed Digest
 
-定时汇总你关注的博主当日发的帖子，在本地整理成候选列表。自用工具，不分发。
+定时汇总你关注的博主当日发的帖子，在本地整理成候选列表。开源，数据全部留在本地。
+
+## 核心功能 / Features
+
+<img src="docs/features.svg" alt="X Feed Digest 核心功能：捕获请求模板、本地汇总与续传、规则化筛选、Grok 创作洞察" width="100%">
 
 ## 它是怎么拿数据的
 
@@ -449,6 +457,6 @@ prompt 里也加了一句明确要求保留原始编号，但不依赖它。
 
 ## 免责
 
-个人自用工具，靠嗅探 x.com 前端自己发出的请求工作，**不是官方接口**。X 改版随时
+本扩展靠嗅探 x.com 前端自己发出的请求工作，**不是官方接口**。X 改版随时
 可能让某个环节失效——模板捕获这套设计就是为了少改点代码，但不保证永远有效。
 用它做什么、会不会触碰 X 的服务条款，自己判断。
